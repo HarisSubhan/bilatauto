@@ -1,0 +1,1 @@
+import{r as e}from"./useRouter-C02ED5Pu.js";import{t}from"./index-Db_X-thS.js";var n=e(),r=()=>(0,n.jsx)(t,{salesTax:!0});export{r as component};
