@@ -1,0 +1,1 @@
+import{r as e}from"./useRouter-D3kWLVF1.js";import{t}from"./index-BG2KeYuU.js";var n=e(),r=()=>(0,n.jsx)(t,{salesTax:!0});export{r as component};
