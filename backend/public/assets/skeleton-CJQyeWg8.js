@@ -1,0 +1,1 @@
+import{r as e}from"./useRouter-D3kWLVF1.js";import{a as t}from"./bilal-logo.asset-DiRvm8TT.js";var n=e();function r({className:e,...r}){return(0,n.jsx)(`div`,{className:t(`animate-pulse rounded-md bg-primary/10`,e),...r})}export{r as t};
