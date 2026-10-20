@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+
+.dev.vars
+
+# Cloudflare / Wrangler
+.wrangler/
+.dev.vars
+
+# Build output
+
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.workspace/
+.DS_Store
+Thumbs.db
+
+# Lockfiles — keeping bun.lock (you're on bun), ignoring npm's
+package-lock.json
+
+# Misc
+*.tsbuildinfo
+.cache/
+coverage/
