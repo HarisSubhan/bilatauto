@@ -1,0 +1,1 @@
+import{r as e}from"./useRouter-D3kWLVF1.js";import{n as t}from"./Match-CPgML_1k.js";var n=e(),r=()=>(0,n.jsx)(t,{});export{r as component};

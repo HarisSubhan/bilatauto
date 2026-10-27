@@ -1,0 +1,826 @@
+-- Bilal Autos — full database migration (schema + default roles, permissions, settings, Super Admin)
+-- Run once on an empty database:  mysql -u USER -p DATABASE_NAME < migration.sql
+-- Safe to re-run: everything uses IF NOT EXISTS / INSERT IGNORE.
+-- Super Admin login: bilalautos@gmail.com / 123456789  (change the password after first login)
+
+SET NAMES utf8mb4;
+CREATE TABLE IF NOT EXISTS roles (id CHAR(36) PRIMARY KEY, name VARCHAR(100) NOT NULL, slug VARCHAR(60) NOT NULL UNIQUE, description TEXT, is_system TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS permissions (id CHAR(36) PRIMARY KEY, module VARCHAR(60) NOT NULL, action VARCHAR(30) NOT NULL, UNIQUE(module, action));
+CREATE TABLE IF NOT EXISTS role_permissions (role_id CHAR(36) NOT NULL, permission_id CHAR(36) NOT NULL, PRIMARY KEY(role_id, permission_id), FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE, FOREIGN KEY(permission_id) REFERENCES permissions(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS users (id CHAR(36) PRIMARY KEY, full_name VARCHAR(150) NOT NULL, username VARCHAR(80), email VARCHAR(255) NOT NULL UNIQUE, phone VARCHAR(40), password_hash VARCHAR(100) NOT NULL, status ENUM('active','inactive','suspended') NOT NULL DEFAULT 'active', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS user_roles (id CHAR(36) PRIMARY KEY, user_id CHAR(36) NOT NULL, role_id CHAR(36) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, role_id), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS departments (id CHAR(36) PRIMARY KEY, name VARCHAR(200) NOT NULL, code VARCHAR(50), contact_person VARCHAR(150), email VARCHAR(255), phone VARCHAR(40), address TEXT, tax_number VARCHAR(60), notes TEXT, status ENUM('active','inactive','suspended') NOT NULL DEFAULT 'active', verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified', created_by CHAR(36), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS suppliers (id CHAR(36) PRIMARY KEY, name VARCHAR(200) NOT NULL, supplier_code VARCHAR(50), contact_person VARCHAR(150), email VARCHAR(255), phone VARCHAR(40), address TEXT, city VARCHAR(100), country VARCHAR(100), tax_number VARCHAR(60), notes TEXT, status ENUM('active','inactive','suspended') NOT NULL DEFAULT 'active', verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified', created_by CHAR(36), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS fbr_hs_codes (id CHAR(36) PRIMARY KEY, serial_number VARCHAR(50), hs_code VARCHAR(50) NOT NULL, description TEXT NOT NULL, verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified', created_by CHAR(36), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, INDEX(hs_code), FULLTEXT(description));
+CREATE TABLE IF NOT EXISTS custom_hs_codes (id CHAR(36) PRIMARY KEY, serial_number VARCHAR(50), hs_code VARCHAR(50) NOT NULL, description TEXT NOT NULL, fbr_hs_code VARCHAR(50), unit VARCHAR(30), min_stock_level DECIMAL(14,2) NOT NULL DEFAULT 0, purchase_price DECIMAL(14,2), sale_price DECIMAL(14,2), verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified', created_by CHAR(36), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, INDEX(hs_code), FULLTEXT(description));
+CREATE TABLE IF NOT EXISTS document_counters (prefix VARCHAR(20) PRIMARY KEY, last_value BIGINT NOT NULL DEFAULT 0, padding INT NOT NULL DEFAULT 6);
+CREATE TABLE IF NOT EXISTS purchases (id CHAR(36) PRIMARY KEY, purchase_number VARCHAR(40) NOT NULL UNIQUE, purchase_date DATE NOT NULL, supplier_id CHAR(36) NOT NULL, bill_number VARCHAR(80), reference_number VARCHAR(80), notes TEXT, subtotal DECIMAL(14,2) NOT NULL DEFAULT 0, discount_total DECIMAL(14,2) NOT NULL DEFAULT 0, tax_total DECIMAL(14,2) NOT NULL DEFAULT 0, grand_total DECIMAL(14,2) NOT NULL DEFAULT 0, status ENUM('draft','submitted','approved','rejected','cancelled','invoiced') NOT NULL DEFAULT 'draft', verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified', created_by CHAR(36), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, FOREIGN KEY(supplier_id) REFERENCES suppliers(id));
+CREATE TABLE IF NOT EXISTS purchase_items (id CHAR(36) PRIMARY KEY, purchase_id CHAR(36) NOT NULL, hs_code VARCHAR(50) NOT NULL, part_number VARCHAR(80), description TEXT NOT NULL, description_source ENUM('fbr','custom') NOT NULL, quantity DECIMAL(14,4) NOT NULL, uom VARCHAR(30), unit_cost DECIMAL(14,6) NOT NULL DEFAULT 0, discount DECIMAL(14,2) NOT NULL DEFAULT 0, tax_percent DECIMAL(6,2) NOT NULL DEFAULT 0, line_total DECIMAL(14,2) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(purchase_id) REFERENCES purchases(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS quotations (id CHAR(36) PRIMARY KEY, vehicle_type VARCHAR(100), vehicle_number VARCHAR(100), labor_percent DECIMAL(6,2) NOT NULL DEFAULT 0, labor_amount DECIMAL(14,2) NOT NULL DEFAULT 0, quotation_number VARCHAR(40) NOT NULL UNIQUE, quotation_date DATE NOT NULL, valid_until DATE, department_id CHAR(36) NOT NULL, contact_person VARCHAR(150), notes TEXT, subtotal DECIMAL(14,2) NOT NULL DEFAULT 0, discount_total DECIMAL(14,2) NOT NULL DEFAULT 0, tax_total DECIMAL(14,2) NOT NULL DEFAULT 0, grand_total DECIMAL(14,2) NOT NULL DEFAULT 0, status ENUM('draft','submitted','approved','rejected','cancelled','invoiced') NOT NULL DEFAULT 'draft', verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified', approval_remarks TEXT, approved_by CHAR(36), approved_at DATETIME, created_by CHAR(36), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, FOREIGN KEY(department_id) REFERENCES departments(id));
+CREATE TABLE IF NOT EXISTS quotation_items (id CHAR(36) PRIMARY KEY, sales_tax_value DECIMAL(14,2) GENERATED ALWAYS AS (ROUND((quantity * unit_price - discount) * tax_percent / 100,2)) STORED, quotation_id CHAR(36) NOT NULL, hs_code VARCHAR(50) NOT NULL, part_number VARCHAR(80), description TEXT NOT NULL, description_source ENUM('fbr','custom') NOT NULL, quantity DECIMAL(14,4) NOT NULL, uom VARCHAR(30), unit_price DECIMAL(14,6) NOT NULL DEFAULT 0, discount DECIMAL(14,2) NOT NULL DEFAULT 0, tax_percent DECIMAL(6,2) NOT NULL DEFAULT 0, labor_percent DECIMAL(6,2) NOT NULL DEFAULT 0, labor_amount DECIMAL(14,2) NOT NULL DEFAULT 0, fbr_hs_code VARCHAR(50), line_total DECIMAL(14,2) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(quotation_id) REFERENCES quotations(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS quotation_approvals (id CHAR(36) PRIMARY KEY, quotation_id CHAR(36) NOT NULL, action VARCHAR(30) NOT NULL, remarks TEXT, acted_by CHAR(36), acted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(quotation_id) REFERENCES quotations(id));
+CREATE TABLE IF NOT EXISTS invoices (id CHAR(36) PRIMARY KEY, source VARCHAR(20) NOT NULL DEFAULT 'quotation', vehicle_type VARCHAR(100), vehicle_number VARCHAR(100), labor_percent DECIMAL(6,2) NOT NULL DEFAULT 0, labor_amount DECIMAL(14,2) NOT NULL DEFAULT 0, sales_tax_number VARCHAR(40) UNIQUE, invoice_number VARCHAR(40) NOT NULL UNIQUE, invoice_date DATE NOT NULL, department_id CHAR(36) NOT NULL, quotation_id CHAR(36), notes TEXT, subtotal DECIMAL(14,2) NOT NULL DEFAULT 0, discount_total DECIMAL(14,2) NOT NULL DEFAULT 0, tax_total DECIMAL(14,2) NOT NULL DEFAULT 0, grand_total DECIMAL(14,2) NOT NULL DEFAULT 0, status ENUM('draft','submitted','approved','rejected','cancelled','invoiced') NOT NULL DEFAULT 'approved', verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'verified',
+fbr_status VARCHAR(40), fbr_invoice_number VARCHAR(100), fbr_reference VARCHAR(100), fbr_uuid VARCHAR(100), fbr_submitted_at DATETIME, fbr_error_message TEXT, fbr_response JSON,
+created_by CHAR(36), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, FOREIGN KEY(department_id) REFERENCES departments(id), FOREIGN KEY(quotation_id) REFERENCES quotations(id));
+CREATE TABLE IF NOT EXISTS invoice_items (id CHAR(36) PRIMARY KEY, sales_tax_value DECIMAL(14,2) GENERATED ALWAYS AS (ROUND((quantity * unit_price - discount) * tax_percent / 100,2)) STORED, invoice_id CHAR(36) NOT NULL, hs_code VARCHAR(50) NOT NULL, part_number VARCHAR(80), description TEXT NOT NULL, description_source ENUM('fbr','custom') NOT NULL, quantity DECIMAL(14,4) NOT NULL, uom VARCHAR(30), unit_price DECIMAL(14,6) NOT NULL DEFAULT 0, discount DECIMAL(14,2) NOT NULL DEFAULT 0, tax_percent DECIMAL(6,2) NOT NULL DEFAULT 0, labor_percent DECIMAL(6,2) NOT NULL DEFAULT 0, labor_amount DECIMAL(14,2) NOT NULL DEFAULT 0, fbr_hs_code VARCHAR(50), line_total DECIMAL(14,2) NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS stock_movements (id CHAR(36) PRIMARY KEY, movement_number VARCHAR(40) NOT NULL, movement_date DATE NOT NULL, direction ENUM('in','out') NOT NULL, hs_code VARCHAR(50) NOT NULL, description TEXT NOT NULL, quantity DECIMAL(14,4) NOT NULL, uom VARCHAR(30), reference_type VARCHAR(30) NOT NULL, reference_number VARCHAR(40), reference_id CHAR(36), supplier_id CHAR(36), department_id CHAR(36), available_before DECIMAL(14,4), shortfall DECIMAL(14,4) NOT NULL DEFAULT 0, created_by CHAR(36), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, INDEX(hs_code), INDEX(reference_type, reference_id));
+CREATE TABLE IF NOT EXISTS system_settings (`key` VARCHAR(80) PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS activity_logs (id CHAR(36) PRIMARY KEY, user_id CHAR(36), user_name VARCHAR(150), action VARCHAR(30) NOT NULL, module VARCHAR(60) NOT NULL, record_id VARCHAR(60), record_label VARCHAR(200), old_value JSON, new_value JSON, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, INDEX(created_at));
+CREATE OR REPLACE VIEW current_stock AS
+SELECT hs_code, MAX(description) AS description,
+COALESCE(SUM(CASE WHEN direction='in' THEN quantity ELSE 0 END),0) AS total_in,
+COALESCE(SUM(CASE WHEN direction='out' THEN quantity ELSE 0 END),0) AS total_out,
+GREATEST(COALESCE(SUM(CASE WHEN direction='in' THEN quantity ELSE -(quantity - COALESCE(shortfall,0)) END),0),0) AS available
+FROM stock_movements GROUP BY hs_code;
+CREATE OR REPLACE VIEW profiles AS
+SELECT id, full_name, username, email, phone, status, 1 AS is_verified, created_at, updated_at FROM users;
+DROP TRIGGER IF EXISTS trg_block_del_suppliers;
+DROP TRIGGER IF EXISTS trg_block_del_suppliers;
+DELIMITER //
+CREATE TRIGGER trg_block_del_suppliers BEFORE DELETE ON suppliers FOR EACH ROW BEGIN IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF; END //
+DELIMITER ;
+DROP TRIGGER IF EXISTS trg_block_del_departments;
+DROP TRIGGER IF EXISTS trg_block_del_departments;
+DELIMITER //
+CREATE TRIGGER trg_block_del_departments BEFORE DELETE ON departments FOR EACH ROW BEGIN IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF; END //
+DELIMITER ;
+DROP TRIGGER IF EXISTS trg_block_del_fbr;
+DROP TRIGGER IF EXISTS trg_block_del_fbr;
+DELIMITER //
+CREATE TRIGGER trg_block_del_fbr BEFORE DELETE ON fbr_hs_codes FOR EACH ROW BEGIN IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF; END //
+DELIMITER ;
+DROP TRIGGER IF EXISTS trg_block_del_custom;
+DROP TRIGGER IF EXISTS trg_block_del_custom;
+DELIMITER //
+CREATE TRIGGER trg_block_del_custom BEFORE DELETE ON custom_hs_codes FOR EACH ROW BEGIN IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF; END //
+DELIMITER ;
+DROP TRIGGER IF EXISTS trg_block_del_purchases;
+DROP TRIGGER IF EXISTS trg_block_del_purchases;
+DELIMITER //
+CREATE TRIGGER trg_block_del_purchases BEFORE DELETE ON purchases FOR EACH ROW BEGIN IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF; END //
+DELIMITER ;
+DROP TRIGGER IF EXISTS trg_block_del_quotations;
+DROP TRIGGER IF EXISTS trg_block_del_quotations;
+DELIMITER //
+CREATE TRIGGER trg_block_del_quotations BEFORE DELETE ON quotations FOR EACH ROW BEGIN IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF; END //
+DELIMITER ;
+DROP TRIGGER IF EXISTS trg_block_del_invoices;
+DROP TRIGGER IF EXISTS trg_block_del_invoices;
+DELIMITER //
+CREATE TRIGGER trg_block_del_invoices BEFORE DELETE ON invoices FOR EACH ROW BEGIN IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF; END //
+DELIMITER ;
+DROP TRIGGER IF EXISTS trg_block_upd_movements;
+DROP TRIGGER IF EXISTS trg_block_upd_movements;
+DELIMITER //
+CREATE TRIGGER trg_block_upd_movements BEFORE UPDATE ON stock_movements FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Stock entries cannot be edited'; END //
+DELIMITER ;
+INSERT IGNORE INTO roles(id,name,slug,is_system) VALUES ('00000000-0000-4000-8000-000000000001','Super Admin','super_admin',1);
+INSERT IGNORE INTO roles(id,name,slug,is_system) VALUES ('00000000-0000-4000-8000-000000000002','Admin','admin',1);
+INSERT IGNORE INTO roles(id,name,slug,is_system) VALUES ('00000000-0000-4000-8000-000000000003','Manager','manager',1);
+INSERT IGNORE INTO roles(id,name,slug,is_system) VALUES ('00000000-0000-4000-8000-000000000004','Sales','sales',1);
+INSERT IGNORE INTO roles(id,name,slug,is_system) VALUES ('00000000-0000-4000-8000-000000000005','Store Keeper','store_keeper',1);
+INSERT IGNORE INTO roles(id,name,slug,is_system) VALUES ('00000000-0000-4000-8000-000000000006','Viewer','viewer',1);
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000007','dashboard','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000008','dashboard','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000009','dashboard','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000010','dashboard','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000011','dashboard','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000012','dashboard','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000013','dashboard','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000014','suppliers','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000015','suppliers','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000016','suppliers','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000017','suppliers','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000018','suppliers','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000019','suppliers','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000020','suppliers','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000021','departments','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000022','departments','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000023','departments','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000024','departments','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000025','departments','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000026','departments','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000027','departments','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000028','fbr_hs_codes','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000029','fbr_hs_codes','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000030','fbr_hs_codes','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000031','fbr_hs_codes','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000032','fbr_hs_codes','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000033','fbr_hs_codes','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000034','fbr_hs_codes','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000035','custom_hs_codes','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000036','custom_hs_codes','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000037','custom_hs_codes','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000038','custom_hs_codes','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000039','custom_hs_codes','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000040','custom_hs_codes','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000041','custom_hs_codes','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000042','purchases','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000043','purchases','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000044','purchases','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000045','purchases','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000046','purchases','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000047','purchases','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000048','purchases','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000049','quotations','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000050','quotations','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000051','quotations','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000052','quotations','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000053','quotations','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000054','quotations','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000055','quotations','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000056','invoices','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000057','invoices','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000058','invoices','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000059','invoices','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000060','invoices','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000061','invoices','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000062','invoices','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000063','stock','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000064','stock','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000065','stock','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000066','stock','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000067','stock','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000068','stock','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000069','stock','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000070','reports','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000071','reports','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000072','reports','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000073','reports','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000074','reports','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000075','reports','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000076','reports','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000077','users','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000078','users','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000079','users','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000080','users','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000081','users','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000082','users','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000083','users','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000084','settings','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000085','settings','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000086','settings','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000087','settings','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000088','settings','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000089','settings','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000090','settings','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000091','activity_logs','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000092','activity_logs','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000093','activity_logs','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000094','activity_logs','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000095','activity_logs','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000096','activity_logs','approve');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-000000000097','activity_logs','export');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000007');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000008');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000009');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000010');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000011');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000012');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000013');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000014');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000015');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000016');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000017');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000018');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000019');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000020');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000021');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000022');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000023');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000024');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000025');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000026');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000027');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000028');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000029');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000030');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000031');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000032');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000033');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000034');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000035');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000036');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000037');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000038');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000039');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000040');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000041');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000042');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000043');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000044');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000045');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000046');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000047');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000048');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000049');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000050');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000051');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000052');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000053');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000054');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000055');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000056');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000057');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000058');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000059');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000060');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000061');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000062');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000063');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000064');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000065');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000066');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000067');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000068');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000069');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000070');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000071');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000072');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000073');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000074');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000075');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000076');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000077');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000078');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000079');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000080');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000081');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000082');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000083');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000084');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000085');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000086');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000087');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000088');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000089');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000090');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000091');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000092');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000093');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000094');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000095');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000096');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000097');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000007');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000008');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000009');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000010');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000011');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000012');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000013');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000014');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000015');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000016');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000017');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000018');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000019');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000020');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000021');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000022');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000023');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000024');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000025');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000026');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000027');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000028');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000029');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000030');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000031');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000032');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000033');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000034');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000035');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000036');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000037');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000038');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000039');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000040');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000041');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000042');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000043');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000044');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000045');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000046');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000047');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000048');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000049');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000050');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000051');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000052');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000053');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000054');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000055');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000056');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000057');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000058');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000059');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000060');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000061');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000062');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000063');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000064');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000065');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000066');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000067');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000068');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000069');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000070');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000071');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000072');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000073');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000074');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000075');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000076');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000084');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000085');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000086');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000087');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000088');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000089');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000090');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000091');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000092');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000093');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000094');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000095');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000096');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000097');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000007');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000049');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000050');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000051');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000055');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000056');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000057');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000058');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000062');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000021');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000035');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000028');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000070');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000076');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000063');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000007');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000042');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000043');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000044');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000046');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000048');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000063');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000014');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000035');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000028');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000007');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000014');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000021');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000028');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000035');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000042');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000049');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000056');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000063');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000070');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000077');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000084');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) VALUES ('00000000-0000-4000-8000-000000000006','00000000-0000-4000-8000-000000000091');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('company_name','Bilal Autos');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('system_name','Spare Parts Management System');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('currency','PKR');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('invoice_footer','Thank you for your business.');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('company_address','');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('company_phone','');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('company_email','');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('default_tax_percent','18');
+
+-- Super Admin user (password: 123456789 — bcrypt hash)
+INSERT IGNORE INTO users(id,full_name,username,email,password_hash,status) VALUES ('00000000-0000-4000-8000-000000000900','Super Admin','admin','bilalautos@gmail.com','$2a$10$SVNPVBGvrTHvDGCDdH1dEuZRxSBdRrMsvaZ6dldlsd2jD8YtnhCAy','active');
+INSERT IGNORE INTO user_roles(id,user_id,role_id) VALUES ('00000000-0000-4000-8000-000000000901','00000000-0000-4000-8000-000000000900','00000000-0000-4000-8000-000000000001');
+
+-- Document numbering: first invoice / sales tax invoice = 401, first quotation = 481
+INSERT INTO document_counters(prefix,last_value,padding) VALUES ('INV',400,3),('STI',400,3),('QUO',480,3)
+  ON DUPLICATE KEY UPDATE last_value=GREATEST(last_value,VALUES(last_value)), padding=3;
+
+-- Additive, rerunnable v9 upgrade for an existing v8 database. Back up first.
+-- Existing documents, accounts, counters and historical values are not reset.
+SET NAMES utf8mb4;
+CREATE TABLE IF NOT EXISTS type_of_goods (serial_number BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE,id CHAR(36) PRIMARY KEY,name VARCHAR(200) NOT NULL UNIQUE,status ENUM('active','inactive') NOT NULL DEFAULT 'active',verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified',created_by CHAR(36),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS units_of_measurement (serial_number BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE,id CHAR(36) PRIMARY KEY,name VARCHAR(200) NOT NULL UNIQUE,status ENUM('active','inactive') NOT NULL DEFAULT 'active',verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified',created_by CHAR(36),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
+DELIMITER //
+DROP PROCEDURE IF EXISTS ba_v9_add_column//
+CREATE PROCEDURE ba_v9_add_column(IN t VARCHAR(64),IN col VARCHAR(64),IN definition TEXT)
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=t AND column_name=col) THEN
+  SET @s=CONCAT('ALTER TABLE `',t,'` ADD COLUMN `',col,'` ',definition);PREPARE st FROM @s;EXECUTE st;DEALLOCATE PREPARE st;
+ END IF;
+END//
+DELIMITER ;
+CALL ba_v9_add_column('purchase_items','type_of_goods_id','CHAR(36) NULL');
+CALL ba_v9_add_column('purchase_items','uom_id','CHAR(36) NULL');
+CALL ba_v9_add_column('purchase_items','type_of_goods','VARCHAR(200) NULL');
+CALL ba_v9_add_column('purchase_items','product_name','VARCHAR(250) NULL');
+CALL ba_v9_add_column('quotation_items','type_of_goods_id','CHAR(36) NULL');
+CALL ba_v9_add_column('quotation_items','uom_id','CHAR(36) NULL');
+CALL ba_v9_add_column('quotation_items','type_of_goods','VARCHAR(200) NULL');
+CALL ba_v9_add_column('quotation_items','product_name','VARCHAR(250) NULL');
+CALL ba_v9_add_column('invoice_items','type_of_goods_id','CHAR(36) NULL');
+CALL ba_v9_add_column('invoice_items','uom_id','CHAR(36) NULL');
+CALL ba_v9_add_column('invoice_items','type_of_goods','VARCHAR(200) NULL');
+CALL ba_v9_add_column('invoice_items','product_name','VARCHAR(250) NULL');
+CALL ba_v9_add_column('purchase_items','line_position','INT NOT NULL DEFAULT 0');
+CALL ba_v9_add_column('quotation_items','line_position','INT NOT NULL DEFAULT 0');
+CALL ba_v9_add_column('invoice_items','line_position','INT NOT NULL DEFAULT 0');
+CALL ba_v9_add_column('purchase_items','retail_sales_value','DECIMAL(14,2) NOT NULL DEFAULT 0');
+CALL ba_v9_add_column('purchases','supplier_ntn','VARCHAR(200) NULL');
+CALL ba_v9_add_column('purchases','supplier_name','VARCHAR(200) NULL');
+CALL ba_v9_add_column('invoices','buyer_ntn','VARCHAR(200) NULL');
+CALL ba_v9_add_column('invoices','buyer_name','VARCHAR(200) NULL');
+DROP PROCEDURE ba_v9_add_column;
+DELIMITER //
+DROP TRIGGER IF EXISTS ba_v9_delete_type_of_goods//
+CREATE TRIGGER ba_v9_delete_type_of_goods BEFORE DELETE ON type_of_goods FOR EACH ROW BEGIN
+IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF;
+IF EXISTS(SELECT 1 FROM purchase_items WHERE type_of_goods_id=OLD.id OR (type_of_goods_id IS NULL AND type_of_goods=OLD.name)) OR EXISTS(SELECT 1 FROM quotation_items WHERE type_of_goods_id=OLD.id OR (type_of_goods_id IS NULL AND type_of_goods=OLD.name)) OR EXISTS(SELECT 1 FROM invoice_items WHERE type_of_goods_id=OLD.id OR (type_of_goods_id IS NULL AND type_of_goods=OLD.name)) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='This value is used by a transaction; deactivate it instead'; END IF;
+END//
+DELIMITER ;
+DELIMITER //
+DROP TRIGGER IF EXISTS ba_v9_delete_units_of_measurement//
+CREATE TRIGGER ba_v9_delete_units_of_measurement BEFORE DELETE ON units_of_measurement FOR EACH ROW BEGIN
+IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF;
+IF EXISTS(SELECT 1 FROM purchase_items WHERE uom_id=OLD.id OR (uom_id IS NULL AND uom=OLD.name)) OR EXISTS(SELECT 1 FROM quotation_items WHERE uom_id=OLD.id OR (uom_id IS NULL AND uom=OLD.name)) OR EXISTS(SELECT 1 FROM invoice_items WHERE uom_id=OLD.id OR (uom_id IS NULL AND uom=OLD.name)) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='This value is used by a transaction; deactivate it instead'; END IF;
+END//
+DELIMITER ;
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'3rd Schedule Goods','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Cement /Concrete Block','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'CNG Sales','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Cotton Ginners','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'DTRE goods','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Electric Vehicle','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Electricity Supply to Retailers','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Exempt goods','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Gas to CNG stations','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Goods (FED in ST Mode)','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Goods as per SRO.297(I)/2023','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Goods at Reduced Rate','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Goods at standard rate (default)','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Goods at zero-rate','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Mobile Phones','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Non-Adjustable Supplies','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Petroleum Products','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Potassium Chlorate','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Processing/Conversion of Goods','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Rerollable scrap by ship breakers','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Services','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Services (FED in ST Mode)','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Ship breaking','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'SIM','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Steel Melting and re-rolling','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Sugar','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Telecommunication services','verified');
+INSERT IGNORE INTO type_of_goods(id,name,verification) VALUES(UUID(),'Toll Manufacturing','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'40KG','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Bag','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Barrels','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Bill of lading','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Carat','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Cubic Metre','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Dozen','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Foot','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Gallon','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Gram','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'KG','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Kilogram','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'KWH','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Liter','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Mega Watt','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Meter','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'MMBTU','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'MT','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Numbers, pieces, units','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Others','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Packs','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Pair','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Pound','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'SET','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Square Foot','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Square Metre','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'SqY','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Thousand Unit','verified');
+INSERT IGNORE INTO units_of_measurement(id,name,verification) VALUES(UUID(),'Timber Logs','verified');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'type_of_goods','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'type_of_goods','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'type_of_goods','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'type_of_goods','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'type_of_goods','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'type_of_goods','export');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'units_of_measurement','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'units_of_measurement','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'units_of_measurement','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'units_of_measurement','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'units_of_measurement','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'units_of_measurement','export');
+
+-- ===== v10: FBR IRIS Digital Invoicing =====
+-- Additive, rerunnable v10 upgrade: FBR IRIS Digital Invoicing (Sandbox + Production).
+-- Back up first. Existing invoices, numbers and stock are not changed.
+SET NAMES utf8mb4;
+
+-- One row per environment. Tokens are stored encrypted (AES-256-GCM, key from FBR_SECRET_KEY / JWT_SECRET)
+-- and are never returned to the browser; only the last 4 characters are shown.
+CREATE TABLE IF NOT EXISTS fbr_config (
+  environment ENUM('sandbox','production') PRIMARY KEY,
+  post_url VARCHAR(300) NOT NULL,
+  validate_url VARCHAR(300) NOT NULL,
+  token_enc TEXT NULL,
+  token_last4 VARCHAR(8) NULL,
+  last_test_at DATETIME NULL,
+  last_test_ok TINYINT(1) NULL,
+  last_test_message TEXT NULL,
+  updated_by CHAR(36) NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+INSERT IGNORE INTO fbr_config(environment, post_url, validate_url) VALUES
+ ('sandbox','https://gw.fbr.gov.pk/di_data/v1/di/postinvoicedata_sb','https://gw.fbr.gov.pk/di_data/v1/di/validateinvoicedata_sb'),
+ ('production','https://gw.fbr.gov.pk/di_data/v1/di/postinvoicedata','https://gw.fbr.gov.pk/di_data/v1/di/validateinvoicedata');
+
+-- FBR state of each invoice, kept separately for Sandbox and Production.
+CREATE TABLE IF NOT EXISTS fbr_invoice_state (
+  invoice_id CHAR(36) NOT NULL,
+  environment ENUM('sandbox','production') NOT NULL,
+  status ENUM('not_validated','validation_failed','validated','submitting','sent','submission_failed','pending_confirmation') NOT NULL DEFAULT 'not_validated',
+  scenario_id VARCHAR(10) NULL,
+  fbr_invoice_number VARCHAR(100) NULL,
+  payload_hash CHAR(64) NULL,
+  last_errors JSON NULL,
+  validated_at DATETIME NULL,
+  submitted_at DATETIME NULL,
+  updated_by CHAR(36) NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY(invoice_id, environment),
+  INDEX(environment, status),
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+);
+
+-- Every connection test / validation / submission with the exact request and response.
+CREATE TABLE IF NOT EXISTS fbr_submissions (
+  id CHAR(36) PRIMARY KEY,
+  invoice_id CHAR(36) NULL,
+  environment ENUM('sandbox','production') NOT NULL,
+  action ENUM('test','validate','submit') NOT NULL,
+  outcome VARCHAR(40) NOT NULL,
+  http_status INT NULL,
+  fbr_invoice_number VARCHAR(100) NULL,
+  request_json JSON NULL,
+  response_json JSON NULL,
+  error_message TEXT NULL,
+  user_id CHAR(36) NULL,
+  user_name VARCHAR(200) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX(invoice_id), INDEX(environment, created_at)
+);
+
+-- Cached FBR reference lists (provinces, UOM) loaded with the user's own token.
+CREATE TABLE IF NOT EXISTS fbr_reference (
+  list_name VARCHAR(40) NOT NULL,
+  code VARCHAR(40) NOT NULL,
+  description VARCHAR(300) NOT NULL,
+  loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(list_name, code)
+);
+
+DELIMITER //
+DROP PROCEDURE IF EXISTS ba_v10_add_column//
+CREATE PROCEDURE ba_v10_add_column(IN t VARCHAR(64),IN col VARCHAR(64),IN definition TEXT)
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=t AND column_name=col) THEN
+  SET @s=CONCAT('ALTER TABLE `',t,'` ADD COLUMN `',col,'` ',definition);PREPARE st FROM @s;EXECUTE st;DEALLOCATE PREPARE st;
+ END IF;
+END//
+DELIMITER ;
+CALL ba_v10_add_column('departments','province','VARCHAR(100) NULL');
+CALL ba_v10_add_column('departments','registration_type',"ENUM('Registered','Unregistered') NULL");
+DROP PROCEDURE ba_v10_add_column;
+
+-- An invoice accepted by FBR Production can never be deleted or edited.
+DELIMITER //
+DROP TRIGGER IF EXISTS ba_v10_block_sent_invoice_delete//
+CREATE TRIGGER ba_v10_block_sent_invoice_delete BEFORE DELETE ON invoices FOR EACH ROW BEGIN
+ IF EXISTS(SELECT 1 FROM fbr_invoice_state WHERE invoice_id=OLD.id AND environment='production' AND status IN ('sent','submitting','pending_confirmation')) THEN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='This invoice was sent to FBR and cannot be deleted';
+ END IF;
+END//
+DELIMITER ;
+
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('fbr_active_environment','sandbox');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('fbr_production_approved','0');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('fbr_default_scenario','SN001');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('fbr_seller_ntn','');
+INSERT IGNORE INTO system_settings(`key`,value) VALUES ('fbr_seller_province','');
+
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-0000000f0001','fbr','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-0000000f0002','fbr','validate');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-0000000f0003','fbr','submit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES ('00000000-0000-4000-8000-0000000f0004','fbr','configure');
+-- Admin role (if present) gets view/validate/submit; Super Admin always has everything.
+INSERT IGNORE INTO role_permissions(role_id, permission_id)
+ SELECT r.id, p.id FROM roles r JOIN permissions p ON p.module='fbr' AND p.action IN ('view','validate','submit') WHERE r.slug='admin';
+
+-- Apply after upgrade-v10-fbr.sql. Safe to run more than once.
+DELIMITER //
+DROP PROCEDURE IF EXISTS ba_v11_connections//
+CREATE PROCEDURE ba_v11_connections()
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='fbr_config' AND column_name='connected') THEN
+  ALTER TABLE fbr_config ADD COLUMN connected TINYINT(1) NOT NULL DEFAULT 0;
+ END IF;
+END//
+DELIMITER ;
+CALL ba_v11_connections();
+DROP PROCEDURE ba_v11_connections;
+-- Existing credentials remain encrypted; connect/test again to activate an environment.
+-- v12: Seller settings and the 28 PRAL Sandbox scenarios. Safe to re-run.
+CREATE TABLE IF NOT EXISTS fbr_scenarios (
+ scenario_id VARCHAR(10) PRIMARY KEY, description VARCHAR(300) NOT NULL, sale_type VARCHAR(200) NOT NULL
+);
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN001','Goods at standard rate to registered buyers','Goods at standard rate (default)');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN002','Goods at standard rate to unregistered buyers','Goods at standard rate (default)');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN003','Sale of Steel (Melted and Re-Rolled)','Steel Melting and re-rolling');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN004','Sale by Ship Breakers','Ship breaking');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN005','Reduced rate sale','Goods at Reduced Rate');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN006','Exempt goods sale','Exempt goods');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN007','Zero rated sale','Goods at zero-rate');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN008','Sale of 3rd schedule goods','3rd Schedule Goods');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN009','Cotton Spinners purchase from Cotton Ginners (Textile Sector)','Cotton Ginners');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN010','Telecom services rendered or provided','Telecommunication services');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN011','Toll Manufacturing sale by Steel sector','Toll Manufacturing');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN012','Sale of Petroleum products','Petroleum Products');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN013','Electricity Supply to Retailers','Electricity Supply to Retailers');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN014','Sale of Gas to CNG stations','Gas to CNG stations');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN015','Sale of mobile phones','Mobile Phones');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN016','Processing / Conversion of Goods','Processing/Conversion of Goods');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN017','Sale of Goods where FED is charged in ST mode','Goods (FED in ST Mode)');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN018','Services rendered or provided where FED is charged in ST mode','Services (FED in ST Mode)');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN019','Services rendered or provided','Services');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN020','Sale of Electric Vehicles','Electric Vehicle');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN021','Sale of Cement /Concrete Block','Cement /Concrete Block');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN022','Sale of Potassium Chlorate','Potassium Chlorate');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN023','Sale of CNG','CNG Sales');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN024','Goods sold that are listed in SRO 297(1)/2023','Goods as per SRO.297(I)/2023');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN025','Drugs sold at fixed ST rate under serial 81 of Eighth Schedule Table 1','Non-Adjustable Supplies');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN026','Sale to End Consumer by retailers','Goods at standard rate (default)');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN027','Sale to End Consumer by retailers','3rd Schedule Goods');
+INSERT IGNORE INTO fbr_scenarios VALUES ('SN028','Sale to End Consumer by retailers','Goods at Reduced Rate');
+INSERT IGNORE INTO system_settings(`key`,value) SELECT 'fbr_seller_name',value FROM system_settings WHERE `key`='company_name';
+INSERT IGNORE INTO system_settings(`key`,value) SELECT 'fbr_seller_address',value FROM system_settings WHERE `key`='company_address';
+INSERT IGNORE INTO system_settings(`key`,value) SELECT 'fbr_seller_cnic',IF(CHAR_LENGTH(value)=13,value,'') FROM system_settings WHERE `key`='fbr_seller_ntn';
+UPDATE system_settings SET value='' WHERE `key`='fbr_seller_ntn' AND CHAR_LENGTH(value)=13;
+
+-- v13: Labor replaced by HS-code service lines; SRO and Buyer Type masters; buyer type on documents. Safe to re-run.
+-- Historical labor_percent / labor_amount columns are kept (deprecated) so old invoices still open and print.
+DELIMITER //
+DROP PROCEDURE IF EXISTS ba_v13_add_column//
+CREATE PROCEDURE ba_v13_add_column(IN t VARCHAR(64),IN col VARCHAR(64),IN definition TEXT)
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=t AND column_name=col) THEN
+  SET @s=CONCAT('ALTER TABLE `',t,'` ADD COLUMN `',col,'` ',definition);PREPARE st FROM @s;EXECUTE st;DEALLOCATE PREPARE st;
+ END IF;
+END//
+DELIMITER ;
+CREATE TABLE IF NOT EXISTS sro_master (serial_number BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE,id CHAR(36) PRIMARY KEY,name VARCHAR(200) NOT NULL UNIQUE,description VARCHAR(1000) NULL,status ENUM('active','inactive') NOT NULL DEFAULT 'active',verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified',created_by CHAR(36),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS buyer_types (serial_number BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE,id CHAR(36) PRIMARY KEY,name VARCHAR(200) NOT NULL UNIQUE,status ENUM('active','inactive') NOT NULL DEFAULT 'active',verification ENUM('draft','unverified','verified') NOT NULL DEFAULT 'unverified',created_by CHAR(36),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);
+CALL ba_v13_add_column('quotation_items','item_kind',"ENUM('goods','service') NOT NULL DEFAULT 'goods'");
+CALL ba_v13_add_column('quotation_items','service_percent','DECIMAL(7,2) NULL');
+CALL ba_v13_add_column('quotation_items','sro_schedule_no','VARCHAR(200) NULL');
+CALL ba_v13_add_column('quotation_items','sro_item_serial_no','VARCHAR(100) NULL');
+CALL ba_v13_add_column('invoice_items','item_kind',"ENUM('goods','service') NOT NULL DEFAULT 'goods'");
+CALL ba_v13_add_column('invoice_items','service_percent','DECIMAL(7,2) NULL');
+CALL ba_v13_add_column('invoice_items','sro_schedule_no','VARCHAR(200) NULL');
+CALL ba_v13_add_column('invoice_items','sro_item_serial_no','VARCHAR(100) NULL');
+CALL ba_v13_add_column('quotations','buyer_type',"ENUM('Registered','Unregistered') NULL");
+CALL ba_v13_add_column('invoices','buyer_type',"ENUM('Registered','Unregistered') NULL");
+DROP PROCEDURE IF EXISTS ba_v13_add_column;
+UPDATE invoices i JOIN departments d ON d.id=i.department_id SET i.buyer_type=d.registration_type WHERE i.buyer_type IS NULL AND d.registration_type IN ('Registered','Unregistered');
+UPDATE quotations q JOIN departments d ON d.id=q.department_id SET q.buyer_type=d.registration_type WHERE q.buyer_type IS NULL AND d.registration_type IN ('Registered','Unregistered');
+INSERT IGNORE INTO buyer_types(id,name,verification) VALUES(UUID(),'Registered','verified');
+INSERT IGNORE INTO buyer_types(id,name,verification) VALUES(UUID(),'Unregistered','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'01(I)/2022','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1007(I)/2005','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1125(I)/2011','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1167(I)/2018','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1180(I)/2016','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1212(I)/2018','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'125(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1308(I)/2018','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1450(I)/2021','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1579(1)/2021','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1604(I)/2021','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1636(1)/2022','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'164(I)/2010','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'172(I)/2006','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'183(I)/2022','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'188(I)/2015','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'1st Schedule FED','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'21(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'213(I)/2013','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'223(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'237(I)/2020','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'253(I)/2019','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'292(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'297(I)/2023-Table-I','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'297(I)/2023-Table-II','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'321(I)/2022','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'326(I)/2008','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'327(I)/2008','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'398(I)/2015','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'3rd Schd Table II','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'3rd Schedule goods','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'408(I)/2012','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'408(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'484(I)/2015','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'495(I)/2016','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'499(I)/2013','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'501(I)/2013','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'525(I)/2008','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'539(I)/2008','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'542(I)/2008','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'549(I)/2008','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'551(I)/2008','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'572(I)/2014','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'581(1)/2024','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'581(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'587(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'590(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'5th Schedule','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'608(I)/2012','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'641(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'646(I)/2005','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'657(I)/2013','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'670(I)/2013','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'678(I)/2004','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'6th Schd Table I','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'6th Schd Table II','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'6th Schd Table III','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'6th Schedule','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'713(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'727(I)/2011','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'757(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'76(I)/2008','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'760(I)/2012','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'777(I)2018','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'781(I)2018','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'79(I)/2012','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'802(I)/2009','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'811(I)/2009','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'863(I)/2007','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'867(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'88(I)/2022','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'880(I)/2007','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'896(I)/2013','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'898(I)/2013','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'8th Schedules','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'91(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'946(1)/2013','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'984(I)/2017','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'9th Schedule','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'9th Schedules','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'DTRE','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'EIGHTH SCHEDULE Table 1','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'EIGHTH SCHEDULE Table 2','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'FED 3rd Schd Table I','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'FED 3rd Schd Table II','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'FIFTH SCHEDULE','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'ICTO','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'ICTO TABLE I','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'ICTO TABLE II','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'NINTH SCHEDULE','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'Section 4(b)','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'SECTION 49','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'SRO 342 (I)/2002','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'Zero Rated Elec.','verified');
+INSERT IGNORE INTO sro_master(id,name,verification) VALUES(UUID(),'Zero Rated Gas','verified');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'sro_master','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'sro_master','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'sro_master','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'sro_master','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'sro_master','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'sro_master','export');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) SELECT rp.role_id,p2.id FROM role_permissions rp JOIN permissions p1 ON p1.id=rp.permission_id AND p1.module='units_of_measurement' JOIN permissions p2 ON p2.module='sro_master' AND p2.action=p1.action;
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'buyer_types','view');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'buyer_types','create');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'buyer_types','edit');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'buyer_types','delete');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'buyer_types','verify');
+INSERT IGNORE INTO permissions(id,module,action) VALUES(UUID(),'buyer_types','export');
+INSERT IGNORE INTO role_permissions(role_id,permission_id) SELECT rp.role_id,p2.id FROM role_permissions rp JOIN permissions p1 ON p1.id=rp.permission_id AND p1.module='units_of_measurement' JOIN permissions p2 ON p2.module='buyer_types' AND p2.action=p1.action;
+DELIMITER //
+DROP TRIGGER IF EXISTS ba_v13_delete_sro_master//
+CREATE TRIGGER ba_v13_delete_sro_master BEFORE DELETE ON sro_master FOR EACH ROW BEGIN
+IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF;
+IF EXISTS(SELECT 1 FROM quotation_items WHERE sro_schedule_no=OLD.name) OR EXISTS(SELECT 1 FROM invoice_items WHERE sro_schedule_no=OLD.name) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='This value is used by a transaction; deactivate it instead'; END IF;
+END//
+DROP TRIGGER IF EXISTS ba_v13_delete_buyer_types//
+CREATE TRIGGER ba_v13_delete_buyer_types BEFORE DELETE ON buyer_types FOR EACH ROW BEGIN
+IF OLD.verification='verified' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Verified records cannot be deleted'; END IF;
+IF EXISTS(SELECT 1 FROM quotations WHERE buyer_type=OLD.name) OR EXISTS(SELECT 1 FROM invoices WHERE buyer_type=OLD.name) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='This value is used by a transaction; deactivate it instead'; END IF;
+END//
+DELIMITER ;
