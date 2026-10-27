@@ -398,7 +398,7 @@ INSERT IGNORE INTO users(id,full_name,username,email,password_hash,status) VALUE
 INSERT IGNORE INTO user_roles(id,user_id,role_id) VALUES ('00000000-0000-4000-8000-000000000901','00000000-0000-4000-8000-000000000900','00000000-0000-4000-8000-000000000001');
 
 -- Document numbering: first invoice / sales tax invoice = 401, first quotation = 481
-INSERT INTO document_counters(prefix,last_value,padding) VALUES ('INV',400,3),('STI',400,3),('QUO',480,3)
+INSERT INTO document_counters(prefix,last_value,padding) VALUES ('INV',425,3),('STI',425,3),('QUO',480,3)
   ON DUPLICATE KEY UPDATE last_value=GREATEST(last_value,VALUES(last_value)), padding=3;
 
 -- Additive, rerunnable v9 upgrade for an existing v8 database. Back up first.

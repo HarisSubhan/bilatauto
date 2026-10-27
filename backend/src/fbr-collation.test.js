@@ -39,7 +39,7 @@ test('mixed general/unicode HS collations validate without posting or changing p
       if (sql.includes('FROM invoice_items it')) return db.query(sql, args);
       if (sql.includes('FROM fbr_config')) return [[{ connected: 1, token_enc: encryptToken('test-only'), validate_url: 'https://test.invalid/validateinvoicedata', post_url: 'https://test.invalid/postinvoicedata' }]];
       if (sql.includes('FROM fbr_reference')) return [[]];
-      if (sql.includes('FROM invoices i')) return [[{ id, invoice_number: 'INV-430', invoice_date: '2026-10-27', department_name: 'Buyer', tax_number: '9012101-5', province: 'CAPITAL TERRITORY', address: 'Islamabad', buyer_type: 'Registered' }]];
+      if (sql.includes('FROM invoices i')) return [[{ id, invoice_number: 'INV-401', invoice_date: '2026-10-27', department_name: 'Buyer', tax_number: '9012101-5', province: 'CAPITAL TERRITORY', address: 'Islamabad', buyer_type: 'Registered' }]];
       if (sql.includes('FROM system_settings')) return [[{ key: 'fbr_seller_ntn', value: '7079463' }, { key: 'fbr_seller_name', value: 'Bilal Autos' }, { key: 'fbr_seller_address', value: 'Islamabad' }, { key: 'fbr_seller_province', value: 'CAPITAL TERRITORY' }]];
       if (sql.includes('SELECT * FROM fbr_invoice_state')) return [[{ ...state }]];
       if (sql.startsWith('UPDATE fbr_invoice_state SET ?')) { Object.assign(state, args[0]); return [{ affectedRows: 1 }]; }
